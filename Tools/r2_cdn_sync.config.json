@@ -1,0 +1,16 @@
+{
+  "CdnRootDirectory": "LocalCdn",
+  "BucketName": "your-r2-bucket",
+  "AccountId": "your-cloudflare-account-id",
+  "EndpointUrl": "",
+  "Prefix": "",
+  "AwsProfile": "",
+  "DeleteRemote": false,
+  "PublishLocalFirst": true,
+  "PublishConfigPath": "Tools/local_cdn_server.config.json",
+  "PublicRoot": "https://pub-xxxx.r2.dev",
+  "VersionTestPath": "Android/DefaultPackage/DefaultPackage.version",
+  "DryRun": false,
+  "InteractiveCredentials": true,
+  "PauseOnExit": true
+}

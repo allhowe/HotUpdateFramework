@@ -104,3 +104,12 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+/Bundles/
+.idea/
+/HybridCLRData/
+/LocalCdn/
+/yoo/
+__pycache__/
+/yoo/
+*_BurstDebugInformation_DoNotShip
