@@ -25,7 +25,24 @@
 
 ```csharp
 HotUpdateConfig config = HotUpdateConfig.LoadDefault();
-await HotUpdateService.Instance.RunAsync(config, progress, cancellationToken);
+var context = new HotUpdateContext
+{
+    OnComplete = OnHotUpdateComplete,
+    OnProgress = OnHotUpdateContextProgress,
+    UserData = this
+};
+
+await HotUpdateService.Instance.RunAsync(config, progress, cancellationToken, context);
+```
+
+热更入口可以按需声明框架支持的参数，`HotUpdateContext` 会由 AOT 启动侧传入：
+
+```csharp
+public static async UniTask Start(HotUpdateContext context, CancellationToken cancellationToken)
+{
+    await InitGameAsync(cancellationToken);
+    context?.Complete();
+}
 ```
 
 ## 默认目录

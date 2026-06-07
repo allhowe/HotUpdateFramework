@@ -25,7 +25,12 @@ namespace HotUpdateFramework
         {
         }
 
-        public async UniTask RunAsync(HotUpdateConfig config, IProgress<HotUpdateProgress> progress = null, CancellationToken cancellationToken = default)
+        public UniTask RunAsync(HotUpdateConfig config, HotUpdateContext context, IProgress<HotUpdateProgress> progress = null, CancellationToken cancellationToken = default)
+        {
+            return RunAsync(config, progress, cancellationToken, context);
+        }
+
+        public async UniTask RunAsync(HotUpdateConfig config, IProgress<HotUpdateProgress> progress = null, CancellationToken cancellationToken = default, HotUpdateContext context = null)
         {
             if (config == null)
                 throw new ArgumentNullException(nameof(config));
@@ -44,7 +49,7 @@ namespace HotUpdateFramework
 
                 await LoadAotMetadataAsync(config, Package, progress, cancellationToken);
                 await LoadHotUpdateAssembliesAsync(config, Package, progress, cancellationToken);
-                await InvokeEntryAsync(config, progress, cancellationToken);
+                await InvokeEntryAsync(config, context, progress, cancellationToken);
 
                 Report(progress, HotUpdateStage.Completed, "Hot update completed", 1f);
             }
@@ -238,7 +243,7 @@ namespace HotUpdateFramework
             }
         }
 
-        private async UniTask InvokeEntryAsync(HotUpdateConfig config, IProgress<HotUpdateProgress> progress, CancellationToken cancellationToken)
+        private async UniTask InvokeEntryAsync(HotUpdateConfig config, HotUpdateContext context, IProgress<HotUpdateProgress> progress, CancellationToken cancellationToken)
         {
             if (config.InvokeHotUpdateEntry == false)
                 return;
@@ -252,7 +257,7 @@ namespace HotUpdateFramework
             if (method == null)
                 throw new HotUpdateException($"Can not find hot update entry: {config.EntryTypeName}.{config.EntryMethodName}");
 
-            object[] args = BuildEntryArguments(method, config, cancellationToken);
+            object[] args = BuildEntryArguments(method, config, context, cancellationToken);
 
             try
             {
@@ -286,7 +291,7 @@ namespace HotUpdateFramework
             return null;
         }
 
-        private object[] BuildEntryArguments(MethodInfo method, HotUpdateConfig config, CancellationToken cancellationToken)
+        private object[] BuildEntryArguments(MethodInfo method, HotUpdateConfig config, HotUpdateContext context, CancellationToken cancellationToken)
         {
             ParameterInfo[] parameters = method.GetParameters();
             object[] args = new object[parameters.Length];
@@ -300,6 +305,8 @@ namespace HotUpdateFramework
                     args[i] = this;
                 else if (type.IsInstanceOfType(config))
                     args[i] = config;
+                else if (type == typeof(HotUpdateContext))
+                    args[i] = context;
                 else if (type == typeof(CancellationToken))
                     args[i] = cancellationToken;
                 else if (parameters[i].HasDefaultValue)
