@@ -19,7 +19,7 @@ namespace HotUpdateFramework
         [SerializeField] private bool setAsDefaultPackage = true;
         [SerializeField] private bool useBuildinFileSystemInHostMode = false;
         [SerializeField] private string packageVersionOverride = string.Empty;
-        [SerializeField] private int manifestTimeout = 60;
+        [SerializeField] private int manifestTimeout = 10;
 
         [Header("CDN")]
         [SerializeField] private string remoteMainRoot = "https://your-cdn-domain.example.com/hotupdate";

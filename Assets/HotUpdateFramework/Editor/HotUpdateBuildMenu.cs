@@ -1,8 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
 using HotUpdateFramework;
 using HybridCLR.Editor;
 using HybridCLR.Editor.Commands;
+using HybridCLR.Editor.Settings;
 using UnityEditor;
 using UnityEngine;
 using YooAsset;
@@ -45,6 +49,38 @@ namespace HotUpdateFramework.Editor
         public static void GenerateHybridClrAll()
         {
             PrebuildCommand.GenerateAll();
+            SyncAotMetadataList();
+        }
+
+        [MenuItem(MenuRoot + "Generate HybridCLR/Sync AOT Metadata List", priority = 30)]
+        public static void SyncAotMetadataList()
+        {
+            HotUpdateConfig config = GetOrCreateConfig();
+            string aotGenericReferencesPath = GetAotGenericReferencesFullPath();
+            string[] aotMetadataAssemblyNames = ReadPatchedAotAssemblyList(aotGenericReferencesPath);
+            if (aotMetadataAssemblyNames.Length == 0)
+            {
+                Debug.LogWarning($"[HotUpdate] No AOT metadata assembly found in {aotGenericReferencesPath}");
+                return;
+            }
+
+            string[] hybridClrPatchAotAssemblyNames = aotMetadataAssemblyNames
+                .Select(RemoveDllExtension)
+                .ToArray();
+
+            bool configChanged = SyncStringArrayProperty(config, "aotMetadataAssemblyNames", aotMetadataAssemblyNames);
+            bool hybridClrSettingsChanged = SyncStringArrayProperty(SettingsUtil.HybridCLRSettings, "patchAOTAssemblies", hybridClrPatchAotAssemblyNames);
+            if (hybridClrSettingsChanged)
+                HybridCLRSettings.Save();
+
+            if (configChanged || hybridClrSettingsChanged)
+            {
+                AssetDatabase.SaveAssets();
+                Debug.Log($"[HotUpdate] Synced AOT metadata list: {string.Join(", ", aotMetadataAssemblyNames)}");
+                return;
+            }
+
+            Debug.Log($"[HotUpdate] AOT metadata list is already synced: {string.Join(", ", aotMetadataAssemblyNames)}");
         }
 
         [MenuItem(MenuRoot + "Prepare YooAsset DLL Assets", priority = 40)]
@@ -139,6 +175,76 @@ namespace HotUpdateFramework.Editor
             return HotUpdateConfig.LoadDefault() ?? CreateDefaultConfigAsset();
         }
 
+        private static string GetAotGenericReferencesFullPath()
+        {
+            string outputFile = SettingsUtil.HybridCLRSettings.outputAOTGenericReferenceFile;
+            return Path.GetFullPath(Path.Combine(Application.dataPath, outputFile.Replace('/', Path.DirectorySeparatorChar)));
+        }
+
+        private static string[] ReadPatchedAotAssemblyList(string filePath)
+        {
+            if (File.Exists(filePath) == false)
+                throw new FileNotFoundException($"AOTGenericReferences file not found: {filePath}", filePath);
+
+            string content = File.ReadAllText(filePath);
+            Match listMatch = Regex.Match(
+                content,
+                @"PatchedAOTAssemblyList\s*=\s*new\s+List<string>\s*\{(?<body>.*?)\};",
+                RegexOptions.Singleline);
+
+            if (listMatch.Success == false)
+                throw new Exception($"Can not parse PatchedAOTAssemblyList in {filePath}");
+
+            var assemblyNames = new List<string>();
+            MatchCollection matches = Regex.Matches(listMatch.Groups["body"].Value, "\"(?<name>[^\"]+)\"");
+            foreach (Match match in matches)
+            {
+                string assemblyName = NormalizeDllAssemblyName(match.Groups["name"].Value);
+                if (string.IsNullOrWhiteSpace(assemblyName))
+                    continue;
+
+                if (assemblyNames.Any(item => string.Equals(item, assemblyName, StringComparison.OrdinalIgnoreCase)) == false)
+                    assemblyNames.Add(assemblyName);
+            }
+
+            return assemblyNames.ToArray();
+        }
+
+        private static bool SyncStringArrayProperty(UnityEngine.Object target, string propertyName, string[] values)
+        {
+            var serializedObject = new SerializedObject(target);
+            serializedObject.Update();
+            SerializedProperty property = serializedObject.FindProperty(propertyName);
+            if (property == null)
+                throw new Exception($"Can not find serialized property: {propertyName}");
+
+            if (StringArrayPropertyEquals(property, values))
+                return false;
+
+            property.arraySize = values.Length;
+            for (int i = 0; i < values.Length; i++)
+                property.GetArrayElementAtIndex(i).stringValue = values[i];
+
+            serializedObject.ApplyModifiedProperties();
+            EditorUtility.SetDirty(target);
+            return true;
+        }
+
+        private static bool StringArrayPropertyEquals(SerializedProperty property, string[] values)
+        {
+            if (property.arraySize != values.Length)
+                return false;
+
+            for (int i = 0; i < values.Length; i++)
+            {
+                string propertyValue = property.GetArrayElementAtIndex(i).stringValue;
+                if (string.Equals(propertyValue, values[i], StringComparison.OrdinalIgnoreCase) == false)
+                    return false;
+            }
+
+            return true;
+        }
+
         private static bool CopyIfExists(string sourcePath, string destinationAssetPath)
         {
             if (File.Exists(sourcePath) == false)
@@ -159,6 +265,29 @@ namespace HotUpdateFramework.Editor
             string fileName = Path.GetFileName(assetLocation);
             if (fileName.EndsWith(".bytes", StringComparison.OrdinalIgnoreCase))
                 fileName = fileName.Substring(0, fileName.Length - ".bytes".Length);
+            return fileName;
+        }
+
+        private static string RemoveDllExtension(string assemblyName)
+        {
+            if (assemblyName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                return assemblyName.Substring(0, assemblyName.Length - ".dll".Length);
+
+            return assemblyName;
+        }
+
+        private static string NormalizeDllAssemblyName(string assemblyName)
+        {
+            if (string.IsNullOrWhiteSpace(assemblyName))
+                return string.Empty;
+
+            string fileName = Path.GetFileName(assemblyName.Trim().Replace('\\', '/'));
+            if (fileName.EndsWith(".bytes", StringComparison.OrdinalIgnoreCase))
+                fileName = fileName.Substring(0, fileName.Length - ".bytes".Length);
+
+            if (fileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) == false)
+                fileName += ".dll";
+
             return fileName;
         }
 

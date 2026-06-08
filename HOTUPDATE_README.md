@@ -25,6 +25,11 @@
 
 ```csharp
 HotUpdateConfig config = HotUpdateConfig.LoadDefault();
+var progress = Progress.Create<HotUpdateProgress>(value =>
+{
+    //进度处理
+});
+
 var context = new HotUpdateContext
 {
     OnComplete = OnHotUpdateComplete,
@@ -34,6 +39,8 @@ var context = new HotUpdateContext
 
 await HotUpdateService.Instance.RunAsync(config, progress, cancellationToken, context);
 ```
+
+`HotUpdateProgress.Progress` 表示当前阶段进度。Loading 进度条如果需要完整 `0-1` 流程进度，建议在启动层根据 `HotUpdateProgress.Stage` 自己做映射，示例可参考 `Assets/Sample/BootController.cs`。
 
 热更入口可以按需声明框架支持的参数，`HotUpdateContext` 会由 AOT 启动侧传入：
 
@@ -51,7 +58,7 @@ public static async UniTask Start(HotUpdateContext context, CancellationToken ca
 
 - 热更 DLL：`Assets/HotUpdateAssets/Assemblies/HotUpdate.dll.bytes`
 - AOT 元数据 DLL：`Assets/HotUpdateAssets/Assemblies/AOT/*.dll.bytes`
-- 普通热更新资源：`Assets/HotUpdateAssets/Resources`
+- 普通热更新资源：`Assets/HotUpdateAssets/Res`
 - 热更新配置：`Assets/Resources/HotUpdateConfig.asset`
 
 `HotUpdateConfig.asset` 里的程序集目录配置：
@@ -70,7 +77,8 @@ YooAsset Collector 默认配置：
 `ProjectSettings/HybridCLRSettings.asset` 配置内容：
 
 - 热更程序集：`HotUpdate`
-- 默认 AOT 元数据程序集：`mscorlib.dll`、`System.dll`、`System.Core.dll`、`UnityEngine.CoreModule.dll`
+- AOT 元数据程序集：执行 `Hot Update/Generate HybridCLR/Generate All` 后，会从 `Assets/HybridCLRGenerate/AOTGenericReferences.cs` 自动同步到 `ProjectSettings/HybridCLRSettings.asset` 和 `HotUpdateConfig.asset`
+- 也可以手动执行 `Hot Update/Generate HybridCLR/Sync AOT Metadata List` 同步 AOT 元数据程序集列表
 
 ## 编辑器流程
 
@@ -85,6 +93,49 @@ YooAsset Collector 默认配置：
 9. 将生成的 YooAsset 包目录发布到 CDN 源站。
 
 `useBuildinFileSystemInHostMode` 关闭时，`HostPlayMode` 只使用远端 CDN 和本地缓存；开启时，构建菜单会使用 `ClearAndCopyAll` 把本次 YooAsset 构建结果拷到 `Assets/StreamingAssets/DefaultPackage`，运行时会先启用 Buildin 文件系统，再配合 CDN 检查更新。
+
+### 步骤操作
+
+首次出包 / AOT 代码变化 / 切平台 / `Development Build` 开关变化：
+
+```text
+Hot Update/Generate HybridCLR/Generate All
+Hot Update/Prepare YooAsset DLL Assets
+Hot Update/Build YooAsset Package
+Build Player
+```
+
+`Generate All` 会自动同步 AOT 元数据程序集列表。同步来源是 `Assets/HybridCLRGenerate/AOTGenericReferences.cs` 里的 `PatchedAOTAssemblyList`。`ProjectSettings/HybridCLRSettings.asset` 保存不带 `.dll` 的程序集名，`HotUpdateConfig.asset` 保存带 `.dll` 的文件名。
+
+修改AOT启动流程 / CDN 地址 / 播放模式 / 下载开关：
+
+```text
+Build Player
+```
+
+改了 `useBuildinFileSystemInHostMode`：
+
+```text
+Hot Update/Build YooAsset Package
+Build Player
+```
+
+改了 `HotUpdate` 热更代码：
+
+```text
+Hot Update/Generate HybridCLR/Compile HotUpdate DLLs
+Hot Update/Prepare YooAsset DLL Assets
+Hot Update/Build YooAsset Package
+```
+
+如果热更代码新增了需要 AOT 补充元数据支持的泛型调用，执行 `Generate All` 后再继续后续步骤。
+
+改了 `Assets/HotUpdateAssets/Res` 下的热更资源：
+
+```text
+Hot Update/Build YooAsset Package
+```
+
 
 ## CDN 远程目录
 
@@ -270,6 +321,7 @@ https://pub-xxxx.r2.dev/hotupdate
 ## 注意事项
 
 - 真机联机更新建议使用 `HostPlayMode`，并确保源站目录结构和 URL 模板一致。
+- 项目按强联网流程处理热更。没有网络或源站不可用时，版本和清单请求会按 `manifestTimeout` 超时失败，启动层应显示重试、退出或检查网络，不走离线缓存进游戏。
 - `useBuildinFileSystemInHostMode` 只有在重新执行 `Hot Update/Build YooAsset Package` 并重新打 App 包后才对真机首包生效；只在运行时勾选但没有生成 `StreamingAssets/DefaultPackage`，会导致内置 catalog 或清单缺失。
 - Editor 模拟模式依赖 `AssetBundleCollectorSetting.asset` 里存在 `DefaultPackage`。框架不在启动模拟构建前自动修改 Collector 配置。
-- 业务资源默认放进 `Assets/HotUpdateAssets/Resources`，运行时可以通过 `YooAssets.GetPackage("DefaultPackage")` 或默认包加载。
+- 业务资源默认放进 `Assets/HotUpdateAssets/Res`，运行时可以通过 `YooAssets.GetPackage("DefaultPackage")` 或默认包加载。

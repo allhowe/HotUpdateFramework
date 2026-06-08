@@ -17,7 +17,7 @@ MonoBehaviour:
   setAsDefaultPackage: 1
   useBuildinFileSystemInHostMode: 0
   packageVersionOverride: 
-  manifestTimeout: 60
+  manifestTimeout: 10
   remoteMainRoot: http://127.0.1:8080
   remoteFallbackRoot: http://127.0.1:8080
   remoteUrlTemplate: '{Root}/{Platform}/{PackageName}/{FileName}'
@@ -28,10 +28,10 @@ MonoBehaviour:
   homologousImageMode: 1
   aotMetadataAssetDirectory: Assets/HotUpdateAssets/Assemblies/AOT
   aotMetadataAssemblyNames:
-  - mscorlib.dll
-  - System.dll
-  - System.Core.dll
+  - UniTask.dll
   - UnityEngine.CoreModule.dll
+  - YooAsset.dll
+  - mscorlib.dll
   hotUpdateAssemblyAssetDirectory: Assets/HotUpdateAssets/Assemblies
   hotUpdateAssemblyNames:
   - HotUpdate.dll
