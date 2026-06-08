@@ -1,5 +1,6 @@
 import argparse
 import getpass
+import hashlib
 import json
 import mimetypes
 import os
@@ -229,14 +230,37 @@ def collect_local_files(cdn_root):
     return files
 
 
+def file_md5(path):
+    hasher = hashlib.md5()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def build_local_manifest(local_files):
+    manifest = {
+        "format": 1,
+        "files": {},
+    }
+
+    for path, relative_path in local_files:
+        manifest["files"][relative_path] = {
+            "size": path.stat().st_size,
+            "md5": file_md5(path),
+        }
+
+    return manifest
+
+
 def build_s3_key(prefix, relative_path):
     if prefix:
         return f"{prefix}/{relative_path}"
     return relative_path
 
 
-def list_remote_keys(s3, bucket_name, prefix):
-    keys = set()
+def list_remote_objects(s3, bucket_name, prefix):
+    objects = {}
     paginator = s3.get_paginator("list_objects_v2")
     kwargs = {"Bucket": bucket_name}
     if prefix:
@@ -244,9 +268,112 @@ def list_remote_keys(s3, bucket_name, prefix):
 
     for page in paginator.paginate(**kwargs):
         for item in page.get("Contents", []):
-            keys.add(item["Key"])
+            objects[item["Key"]] = {
+                "size": item.get("Size", 0),
+                "etag": str(item.get("ETag", "")).strip('"').lower(),
+            }
 
-    return keys
+    return objects
+
+
+def is_missing_object_error(exc):
+    response = getattr(exc, "response", {})
+    code = str(response.get("Error", {}).get("Code", ""))
+    return code in {"NoSuchKey", "404", "NotFound"}
+
+
+def read_remote_manifest(s3, bucket_name, manifest_key):
+    if not manifest_key:
+        return None
+
+    try:
+        response = s3.get_object(Bucket=bucket_name, Key=manifest_key)
+        data = response["Body"].read()
+        manifest = json.loads(data.decode("utf-8"))
+    except Exception as exc:
+        if is_missing_object_error(exc):
+            return None
+        raise
+
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), dict):
+        return None
+
+    return manifest
+
+
+def can_trust_etag(etag):
+    return bool(etag) and "-" not in etag
+
+
+def select_upload_files(local_files, local_manifest, remote_manifest, remote_objects, prefix, incremental_upload):
+    if not incremental_upload:
+        total_bytes = sum(path.stat().st_size for path, _ in local_files)
+        return list(local_files), 0, 0, total_bytes, "disabled"
+
+    upload_files = []
+    upload_bytes = 0
+    skipped_count = 0
+    skipped_bytes = 0
+    local_file_infos = local_manifest["files"]
+
+    if remote_manifest:
+        remote_file_infos = remote_manifest["files"]
+        compare_source = "manifest"
+        for path, relative_path in local_files:
+            local_info = local_file_infos[relative_path]
+            remote_info = remote_file_infos.get(relative_path)
+            if (remote_info and
+                    int(remote_info.get("size", -1)) == local_info["size"] and
+                    str(remote_info.get("md5", "")).lower() == local_info["md5"]):
+                skipped_count += 1
+                skipped_bytes += local_info["size"]
+                continue
+
+            upload_files.append((path, relative_path))
+            upload_bytes += local_info["size"]
+
+        return upload_files, skipped_count, skipped_bytes, upload_bytes, compare_source
+
+    compare_source = "remote objects"
+    for path, relative_path in local_files:
+        local_info = local_file_infos[relative_path]
+        remote_info = remote_objects.get(build_s3_key(prefix, relative_path))
+        if remote_info:
+            remote_etag = str(remote_info.get("etag", "")).lower()
+            if (int(remote_info.get("size", -1)) == local_info["size"] and
+                    can_trust_etag(remote_etag) and
+                    remote_etag == local_info["md5"]):
+                skipped_count += 1
+                skipped_bytes += local_info["size"]
+                continue
+
+        upload_files.append((path, relative_path))
+        upload_bytes += local_info["size"]
+
+    return upload_files, skipped_count, skipped_bytes, upload_bytes, compare_source
+
+
+def upload_manifest(s3, bucket_name, manifest_key, manifest, remote_manifest, dry_run):
+    if not manifest_key:
+        return 0, "disabled"
+
+    body = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
+    if remote_manifest == manifest:
+        print(f"Sync manifest unchanged s3://{bucket_name}/{manifest_key}")
+        return 0, "unchanged"
+
+    if dry_run:
+        print(f"DRYRUN upload sync manifest -> s3://{bucket_name}/{manifest_key} ({format_bytes(len(body))})")
+        return len(body), "dry-run"
+
+    s3.put_object(
+        Bucket=bucket_name,
+        Key=manifest_key,
+        Body=body,
+        ContentType="application/json",
+    )
+    print(f"Uploaded sync manifest s3://{bucket_name}/{manifest_key} ({format_bytes(len(body))})")
+    return len(body), "uploaded"
 
 
 def delete_remote_keys(s3, bucket_name, keys, dry_run):
@@ -330,6 +457,9 @@ def parse_args():
     parser.add_argument("--public-root", default=None)
     parser.add_argument("--version-test-path", default=None)
     parser.add_argument("--dry-run", action="store_true", default=None)
+    parser.add_argument("--incremental-upload", action="store_true", default=None)
+    parser.add_argument("--upload-all", action="store_true", default=None)
+    parser.add_argument("--sync-manifest-file-name", default=None)
     parser.add_argument("--interactive-credentials", action="store_true", default=None)
     parser.add_argument("--no-interactive-credentials", action="store_true", default=None)
     parser.add_argument("--pause-on-exit", action="store_true", default=None)
@@ -378,6 +508,7 @@ def main(args):
     publish_config_path = config_value(config, "PublishConfigPath", args.publish_config_path, "Tools/local_cdn_server.config.json")
     public_root = str(config_value(config, "PublicRoot", args.public_root, "")).strip()
     version_test_path = str(config_value(config, "VersionTestPath", args.version_test_path, "Android/DefaultPackage/DefaultPackage.version")).strip()
+    sync_manifest_file_name = str(config_value(config, "SyncManifestFileName", args.sync_manifest_file_name, ".r2-sync-manifest.json")).strip().replace("\\", "/").strip("/")
 
     delete_remote = config_bool(config, "DeleteRemote", False)
     if args.delete_remote:
@@ -394,6 +525,12 @@ def main(args):
     dry_run = config_bool(config, "DryRun", False)
     if args.dry_run:
         dry_run = True
+
+    incremental_upload = config_bool(config, "IncrementalUpload", True)
+    if args.incremental_upload:
+        incremental_upload = True
+    if args.upload_all:
+        incremental_upload = False
 
     interactive_credentials = config_bool(config, "InteractiveCredentials", True)
     if args.interactive_credentials:
@@ -424,6 +561,9 @@ def main(args):
 
     local_files = collect_local_files(cdn_root)
     local_keys = {build_s3_key(prefix, relative_path) for _, relative_path in local_files}
+    manifest_key = build_s3_key(prefix, sync_manifest_file_name) if incremental_upload and sync_manifest_file_name else ""
+    if manifest_key:
+        local_keys.add(manifest_key)
 
     print("Sync CDN root to Cloudflare R2:")
     print(f"  Source:   {cdn_root}")
@@ -431,21 +571,52 @@ def main(args):
     print(f"  Endpoint: {endpoint_url}")
     print(f"  Delete:   {delete_remote}")
     print(f"  DryRun:   {dry_run}")
+    print(f"  Incremental upload: {incremental_upload}")
+    if manifest_key:
+        print(f"  Sync manifest: s3://{bucket_name}/{manifest_key}")
     if aws_profile:
         print(f"  Profile:  {aws_profile}")
     print()
 
+    remote_objects = {}
+    if incremental_upload or delete_remote:
+        remote_objects = list_remote_objects(s3, bucket_name, prefix)
+
+    local_manifest = build_local_manifest(local_files) if incremental_upload else None
+    remote_manifest = read_remote_manifest(s3, bucket_name, manifest_key) if manifest_key else None
+    if incremental_upload:
+        print(f"Incremental compare source: {'remote sync manifest' if remote_manifest else 'remote object list'}")
+
     deleted_count = 0
     if delete_remote:
-        remote_keys = list_remote_keys(s3, bucket_name, prefix)
+        remote_keys = set(remote_objects.keys())
         deleted_count = delete_remote_keys(s3, bucket_name, remote_keys - local_keys, dry_run)
 
-    uploaded_count, uploaded_bytes = upload_files(s3, bucket_name, prefix, local_files, dry_run)
+    files_to_upload, skipped_count, skipped_bytes, upload_bytes, compare_source = select_upload_files(
+        local_files,
+        local_manifest,
+        remote_manifest,
+        remote_objects,
+        prefix,
+        incremental_upload,
+    )
+
+    uploaded_count, uploaded_bytes = upload_files(s3, bucket_name, prefix, files_to_upload, dry_run)
+    if incremental_upload:
+        manifest_bytes, manifest_status = upload_manifest(s3, bucket_name, manifest_key, local_manifest, remote_manifest, dry_run)
+    else:
+        manifest_bytes, manifest_status = 0, "disabled"
 
     print()
     print("R2 sync completed.")
-    print(f"  Uploaded: {uploaded_count} files, {format_bytes(uploaded_bytes)}")
+    print(f"  Compared by: {compare_source}")
+    print(f"  Uploaded:    {uploaded_count} files, {format_bytes(uploaded_bytes)}")
+    print(f"  Skipped:     {skipped_count} unchanged files, {format_bytes(skipped_bytes)}")
     print(f"  Deleted:  {deleted_count} remote files")
+    if manifest_status == "unchanged":
+        print("  Manifest:    unchanged")
+    elif manifest_bytes:
+        print(f"  Manifest:    {format_bytes(manifest_bytes)}")
 
     if public_root and "pub-xxxx" not in public_root:
         print("  Version test URL:")

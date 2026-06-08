@@ -276,10 +276,17 @@ python -m pip install -r .\Tools\requirements-r2.txt
   "CdnRootDirectory": "LocalCdn",
   "BucketName": "your-r2-bucket",
   "AccountId": "your-cloudflare-account-id",
+  "EndpointUrl": "",
   "Prefix": "",
+  "AwsProfile": "",
   "DeleteRemote": false,
   "PublishLocalFirst": true,
+  "PublishConfigPath": "Tools/local_cdn_server.config.json",
   "PublicRoot": "https://pub-xxxx.r2.dev",
+  "VersionTestPath": "Android/DefaultPackage/DefaultPackage.version",
+  "DryRun": false,
+  "IncrementalUpload": true,
+  "SyncManifestFileName": ".r2-sync-manifest.json",
   "InteractiveCredentials": true,
   "PauseOnExit": true
 }
@@ -303,6 +310,12 @@ python .\Tools\sync_cdn_to_r2.py
 
 ```text
 s3://<BucketName>/<Prefix>
+```
+
+`IncrementalUpload` 开启时，脚本会在本地生成同步清单，并上传到 R2 的 `.r2-sync-manifest.json`。下次同步会先读取远程清单，按文件相对路径、大小和 MD5 判断是否变化，只上传新增或变化的文件。第一次远程没有同步清单时，脚本会退回使用 R2 对象列表做比对；执行后会写入同步清单，后续同步就会走清单比对。命令行可以临时关闭增量上传：
+
+```powershell
+python .\Tools\sync_cdn_to_r2.py --upload-all
 ```
 
 R2 公开访问地址对应填到 `HotUpdateConfig.asset`：

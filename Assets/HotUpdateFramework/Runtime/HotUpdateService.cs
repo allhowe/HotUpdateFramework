@@ -161,7 +161,6 @@ namespace HotUpdateFramework
             string totalSizeText = FormatBytes(downloader.TotalDownloadBytes);
             Report(progress, HotUpdateStage.DownloadFiles, $"Need download {package.PackageName}: {downloader.TotalDownloadCount} files, {totalSizeText}");
 
-            int lastLoggedPercent = -1;
             downloader.DownloadUpdateCallback = data =>
             {
                 string currentSizeText = FormatBytes(data.CurrentDownloadBytes);
@@ -174,23 +173,20 @@ namespace HotUpdateFramework
                     data.TotalDownloadCount,
                     data.CurrentDownloadBytes,
                     data.TotalDownloadBytes));
-
-                int percent = GetDownloadPercent(data.CurrentDownloadBytes, data.TotalDownloadBytes, data.Progress);
-                if (percent >= lastLoggedPercent + 10 || (percent >= 100 && lastLoggedPercent < 100))
-                {
-                    lastLoggedPercent = percent;
-                    Debug.Log($"[HotUpdate] {downloadMessage} ({percent}%)");
-                }
             };
             downloader.DownloadErrorCallback = data =>
             {
                 Debug.LogError($"[HotUpdate] Download failed: {data.FileName}, {data.ErrorInfo}");
             };
+            downloader.DownloadFinishCallback = data =>
+            {
+                if (data.Succeed)
+                    Report(progress, HotUpdateStage.DownloadFiles, $"Download completed {data.PackageName}: {downloader.TotalDownloadCount} files, {totalSizeText}", 1f);
+            };
 
             downloader.BeginDownload();
             await WaitOperationAsync(downloader, HotUpdateStage.DownloadFiles, $"Download files {package.PackageName}", null, cancellationToken);
             EnsureSucceed(downloader, $"Download YooAsset files {package.PackageName}");
-            Report(progress, HotUpdateStage.DownloadFiles, $"Download completed {package.PackageName}: {downloader.TotalDownloadCount} files, {totalSizeText}", 1f);
         }
 
         private async UniTask LoadAotMetadataAsync(HotUpdateConfig config, ResourcePackage package, IProgress<HotUpdateProgress> progress, CancellationToken cancellationToken)
@@ -376,14 +372,6 @@ namespace HotUpdateFramework
             if (fileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
                 fileName = fileName.Substring(0, fileName.Length - ".dll".Length);
             return fileName;
-        }
-
-        private static int GetDownloadPercent(long currentBytes, long totalBytes, float progress)
-        {
-            if (totalBytes > 0)
-                return Mathf.Clamp(Mathf.FloorToInt(currentBytes * 100f / totalBytes), 0, 100);
-
-            return Mathf.Clamp(Mathf.FloorToInt(progress * 100f), 0, 100);
         }
 
         private static string FormatBytes(long bytes)
