@@ -5,7 +5,8 @@
         "HotUpdateFramework.Runtime",
         "YooAsset",
         "YooAsset.Editor",
-        "HybridCLR.Editor"
+        "HybridCLR.Editor",
+        "Unity.ScriptableBuildPipeline.Editor"
     ],
     "includePlatforms": [
         "Editor"
