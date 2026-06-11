@@ -6,7 +6,6 @@ using System.Reflection;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using HybridCLR;
-using HotUpdateFramework.Crypto;
 using UnityEngine;
 using YooAsset;
 
@@ -35,6 +34,8 @@ namespace HotUpdateFramework
         {
             if (config == null)
                 throw new ArgumentNullException(nameof(config));
+
+            HotUpdateLogger.EnableLog = config.EnableRuntimeLog;
 
             try
             {
@@ -85,7 +86,7 @@ namespace HotUpdateFramework
 
         private static InitializeParameters CreateInitializeParameters(HotUpdateConfig config, string packageName)
         {
-            IDecryptionServices decryptionServices = CreateDecryptionServices(config);
+            IDecryptionServices decryptionServices = HotUpdateCryptoProvider.DecryptionServices;
 
             switch (config.PlayMode)
             {
@@ -103,7 +104,7 @@ namespace HotUpdateFramework
                     };
 
                 case EPlayMode.HostPlayMode:
-                    IRemoteServices remoteServices = new CdnRemoteServices(config, packageName);
+                    IRemoteServices remoteServices = new RemoteServices(config, packageName);
                     return new HostPlayModeParameters
                     {
                         BuildinFileSystemParameters = config.UseBuildinFileSystemInHostMode
@@ -113,10 +114,10 @@ namespace HotUpdateFramework
                     };
 
                 case EPlayMode.WebPlayMode:
-                    if (config.EnableBundleEncryption)
+                    if (decryptionServices != null)
                         throw new HotUpdateException("Bundle encryption does not support WebPlayMode.");
 
-                    IRemoteServices webRemoteServices = new CdnRemoteServices(config, packageName);
+                    IRemoteServices webRemoteServices = new RemoteServices(config, packageName);
                     return new WebPlayModeParameters
                     {
                         WebServerFileSystemParameters = FileSystemParameters.CreateDefaultWebServerFileSystemParameters(),
@@ -126,13 +127,6 @@ namespace HotUpdateFramework
                 default:
                     throw new HotUpdateException($"Unsupported YooAsset play mode: {config.PlayMode}");
             }
-        }
-
-        private static IDecryptionServices CreateDecryptionServices(HotUpdateConfig config)
-        {
-            return config.EnableBundleEncryption
-                ? new HotUpdateBundleDecryptionServices()
-                : null;
         }
 
         private async UniTask<string> RequestAndUpdateManifestAsync(HotUpdateConfig config, ResourcePackage package, string packageVersionOverride, IProgress<HotUpdateProgress> progress, CancellationToken cancellationToken)
@@ -189,7 +183,7 @@ namespace HotUpdateFramework
             };
             downloader.DownloadErrorCallback = data =>
             {
-                Debug.LogError($"[HotUpdate] Download failed: {data.FileName}, {data.ErrorInfo}");
+                HotUpdateLogger.Error($"Download failed: {data.FileName}, {data.ErrorInfo}");
             };
             downloader.DownloadFinishCallback = data =>
             {
@@ -418,7 +412,11 @@ namespace HotUpdateFramework
         private static void Report(IProgress<HotUpdateProgress> progress, HotUpdateStage stage, string message, float value = 0f)
         {
             progress?.Report(new HotUpdateProgress(stage, message, value));
-            Debug.Log($"[HotUpdate] {stage}: {message}");
+            string logMessage = $"{stage}: {message}";
+            if (stage == HotUpdateStage.Failed)
+                HotUpdateLogger.Error(logMessage);
+            else
+                HotUpdateLogger.Log(logMessage);
         }
     }
 }

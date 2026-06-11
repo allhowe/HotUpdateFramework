@@ -2,7 +2,7 @@ using YooAsset;
 
 namespace HotUpdateFramework
 {
-    public sealed class CdnRemoteServices : IRemoteServices
+    public sealed class RemoteServices : IRemoteServices
     {
         private readonly HotUpdateConfig _config;
         private readonly string _packageName;
@@ -11,7 +11,7 @@ namespace HotUpdateFramework
         private string remoteMainRoot;
         private string remoteFallbackRoot;
 
-        public CdnRemoteServices(HotUpdateConfig config, string packageName)
+        public RemoteServices(HotUpdateConfig config, string packageName)
         {
             _config = config;
             _packageName = packageName;

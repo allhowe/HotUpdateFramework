@@ -3,7 +3,6 @@
     "rootNamespace": "HotUpdateFramework.Editor",
     "references": [
         "HotUpdateFramework.Runtime",
-        "HotUpdateFramework.Crypto.Editor",
         "YooAsset",
         "YooAsset.Editor",
         "HybridCLR.Editor",

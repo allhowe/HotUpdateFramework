@@ -13,6 +13,9 @@ namespace HotUpdateFramework
         public const string DefaultHotUpdateAssemblyAssetDirectory = "Assets/HotUpdateAssets/Assemblies";
         public const string DefaultAotMetadataAssetDirectory = "Assets/HotUpdateAssets/Assemblies/AOT";
 
+        [Header("Log")]
+        [SerializeField] private bool enableRuntimeLog = true;
+
         [Header("YooAsset")]
         [SerializeField] private string packageName = "DefaultPackage";
         [SerializeField] private EPlayMode playMode = EPlayMode.HostPlayMode;
@@ -20,7 +23,6 @@ namespace HotUpdateFramework
         [SerializeField] private bool useBuildinFileSystemInHostMode = false;
         [SerializeField] private string packageVersionOverride = string.Empty;
         [SerializeField] private int manifestTimeout = 10;
-        [SerializeField] private bool enableBundleEncryption = false;
 
         [Header("CDN")]
         [SerializeField] private string[] remoteRoots =
@@ -71,7 +73,7 @@ namespace HotUpdateFramework
         public bool DownloadPackage => downloadPackage;
         public int DownloadingMaxNumber => Mathf.Max(1, downloadingMaxNumber);
         public int FailedTryAgain => Mathf.Max(0, failedTryAgain);
-        public bool EnableBundleEncryption => enableBundleEncryption;
+        public bool EnableRuntimeLog => enableRuntimeLog;
         public HomologousImageMode HomologousImageMode => homologousImageMode;
         public string AotMetadataAssetDirectory => NormalizeAssetDirectory(aotMetadataAssetDirectory, DefaultAotMetadataAssetDirectory);
         public IReadOnlyList<string> AotMetadataAssemblyNames => aotMetadataAssemblyNames ?? Array.Empty<string>();

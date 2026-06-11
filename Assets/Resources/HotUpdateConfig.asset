@@ -27,6 +27,7 @@ MonoBehaviour:
   downloadPackage: 1
   downloadingMaxNumber: 8
   failedTryAgain: 3
+  enableRuntimeLog: 1
   homologousImageMode: 1
   aotMetadataAssetDirectory: Assets/HotUpdateAssets/Assemblies/AOT
   aotMetadataAssemblyNames:

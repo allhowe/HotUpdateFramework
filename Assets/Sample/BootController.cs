@@ -12,6 +12,8 @@ public class BootController : MonoBehaviour
 
     private void Start()
     {
+        HotUpdateOffsetCrypto.Register();
+
         var config = HotUpdateConfig.LoadDefault();
         var progress = Progress.Create<HotUpdateProgress>(OnHotUpdateProgress);
         var context = new HotUpdateContext

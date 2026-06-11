@@ -19,11 +19,45 @@
 
 是否下载整个包由 `HotUpdateConfig.asset` 里的 `downloadPackage` 控制，默认开启。
 
-资源包加密由 `HotUpdateConfig.asset` 里的 `enableBundleEncryption` 控制。开启后，`Hot Update/Build YooAsset Package` 会在 YooAsset Bundle 文件头部追加固定偏移字节，运行时在 `HostPlayMode` 和 `OfflinePlayMode` 跳过偏移加载。偏移值在 `HotUpdateOffsetCrypto.DefaultOffset` 中定义。
+运行时框架普通日志由 `HotUpdateConfig.asset` 里的 `enableRuntimeLog` 控制，默认开启。关闭后只隐藏热更阶段类的普通日志，下载失败和热更失败仍然会输出错误日志。
+
+自定义加解密时，直接实现 YooAsset 官方接口，并在构建热更包前和运行热更前注册到 `HotUpdateCryptoProvider`：
+
+```csharp
+public sealed class MyBundleEncryptionServices : IEncryptionServices
+{
+    //encrytion
+}
+public sealed class MyBundleDecryptionServices : IDecryptionServices
+{
+    //decryption
+}
+
+public static class MyBundleCryptoRegister
+{
+#if UNITY_EDITOR
+    [UnityEditor.InitializeOnLoadMethod]
+    private static void InitEditor()
+    {
+        HotUpdateCryptoProvider.SetEncryptionServices(new MyBundleEncryptionServices());
+    }
+#endif
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    private static void InitRuntime()
+    {
+        HotUpdateCryptoProvider.SetDecryptionServices(new MyBundleDecryptionServices());
+    }
+}
+```
+
+运行时解密服务必须在调用 `HotUpdateService.Instance.RunAsync` 之前注册。编辑器加密服务可以放在 Editor 代码里，用 `[InitializeOnLoadMethod]` 注册。构建热更包和运行时加载必须使用同一套算法和参数，否则 AssetBundle 会加载失败。
+
+如果自定义算法只是给 AssetBundle 文件头部增加固定偏移，解密服务里可以直接使用 `AssetBundle.LoadFromFile(fileInfo.FileLoadPath, fileInfo.FileLoadCRC, offset)`，运行时会走更省内存的文件偏移加载。AES、异或、压缩包头等需要还原完整字节的算法，可以在解密服务里读取文件、解密后再从 `AssetBundle.LoadFromMemory` 或 `AssetBundle.LoadFromMemoryAsync` 加载。
 
 ## 运行时接入
 
-框架不在 App 启动时自动开始热更，也不通过 `RuntimeInitializeOnLoadMethod` 自动创建对象。建议在 BootScene 里完成隐私协议、基础 SDK、网络检查、强更检查之后，再手动调用：
+建议在 BootScene 里完成隐私协议、基础 SDK、网络检查、强更检查之后，再手动调用：
 
 ```csharp
 HotUpdateConfig config = HotUpdateConfig.LoadDefault();
@@ -104,7 +138,7 @@ Hot Update/Build YooAsset Package
 Build Player
 ```
 
-`Prepare All Process` 会执行 HybridCLR `Generate All`，同步 AOT 元数据程序集列表，并把热更 DLL 和 AOT 元数据 DLL 复制到配置的资源目录。同步来源是 `Assets/HybridCLRGenerate/AOTGenericReferences.cs` 里的 `PatchedAOTAssemblyList`。`ProjectSettings/HybridCLRSettings.asset` 保存不带 `.dll` 的程序集名，`HotUpdateConfig.asset` 保存带 `.dll` 的文件名。
+`Prepare All Process` 会执行 HybridCLR `Generate All`，同步 AOT 元数据程序集列表，并把热更 DLL 和 AOT 元数据 DLL 复制到配置的资源目录。
 
 修改AOT启动流程 / CDN 地址 / 播放模式 / 下载开关：
 
@@ -112,7 +146,7 @@ Build Player
 Build Player
 ```
 
-改了 `useBuildinFileSystemInHostMode` / 加密开关 / 偏移加密代码：
+改了 `useBuildinFileSystemInHostMode` / 加解密服务代码：
 
 ```text
 Hot Update/Build YooAsset Package
@@ -368,7 +402,7 @@ remoteRoots[1] = https://pub-xxxx.r2.dev/dev
 - 真机联机更新建议使用 `HostPlayMode`，并确保源站目录结构和 URL 模板一致。
 - 项目按强联网流程处理热更。没有网络或源站不可用时，版本和清单请求会按 `manifestTimeout` 超时失败，启动层应显示重试、退出或检查网络，不走离线缓存进游戏。
 - `useBuildinFileSystemInHostMode` 只有在重新执行 `Hot Update/Build YooAsset Package` 并重新打 App 包后才对真机首包生效；只在运行时勾选但没有生成 `StreamingAssets/DefaultPackage`，会导致内置 catalog 或清单缺失。
-- `enableBundleEncryption` 使用偏移加密，适合降低 AssetBundle 直接查看的风险，运行时优先通过 `LoadFromFile` 偏移加载，不需要额外密钥。当前没有接入 WebPlayMode 解密。
+- 资源加密由 `HotUpdateFramework.Runtime` 里的 `HotUpdateCryptoProvider` 注册 YooAsset `IEncryptionServices` 和 `IDecryptionServices` 决定。注册了解密服务时，当前没有接入 WebPlayMode 解密。
 - `Hot Update/Clear/Build Cache` 对齐 YooAsset Builder 的 `Clear Build Cache`，会清理 Scriptable Build Pipeline 缓存，并删除当前平台当前包的构建目录 `Bundles/<Platform>/<PackageName>`。
 - Editor 模拟模式依赖 `AssetBundleCollectorSetting.asset` 里存在 `DefaultPackage`。框架不在启动模拟构建前自动修改 Collector 配置。
 - 业务资源默认放进 `Assets/HotUpdateAssets/Res`，运行时可以通过 `YooAssets.GetPackage("DefaultPackage")` 或默认包加载。
